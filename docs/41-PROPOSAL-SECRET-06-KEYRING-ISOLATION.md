@@ -197,7 +197,12 @@ verify 将完整标签通过受保护内部协议供 control 存储；签名计�
    的 `/internal/v1/keyring/attest` 已移除（404），持内部令牌+偷来
    的 nonce 也无法经 HTTP 取证。一次性码经隐藏输入随通道请求体提
    交；`local.nonce`（0600）由 CLI 读出并随请求提交，**每次成功签
-   发即轮换消费**（泄露值首次使用即死）。attestation =
+   发即轮换消费**（泄露值首次使用即死）。
+   **Windows 边界（2026-10-18 限定验收收口）**：Python 标准库无法
+   建立 NTFS ACL 隔离，回环降级不能承载同等保证——**Windows 上
+   shared 模式直接拒绝启动**，直到带跨用户访问控制测试的 ACL 实现
+   交付（R13）。POSIX 路径的文件级隔离（0700 目录/0600 nonce/
+   0600 socket）由 R10 实测。attestation =
    `HMAC(K_attest, canonical(namespace_id || name || principal_id ||
    workspace_id || proof_id || sha256(code) || purpose || exp))`，
    5 分钟、单次；K_attest 与 K_pin 分离。
@@ -294,7 +299,9 @@ generation/pin 机制不变。
   TICKET_KEY`（签/验 claim ticket 与 pairing ticket）与
   `PP_SWITCH_PLAN_SIGNING_KEY`（签/验执行计划）——control 与
   executor 两侧配置一致；shared 模式**必须显式设置**（回退内部令
-  牌即拒启），个人模式回退内部令牌（单用户信任域，Alpha 无感）。
+  牌即拒启），**不得与内部令牌同值、四把专用密钥互不相同**（复
+  制粘贴配置启动即拒，R14/R15），个人模式回退内部令牌（单用户
+  信任域，Alpha 无感）。
   票据签发点只存在于通过授权检查之后的服务路径（激活/轮换确认/
   发现），不存在任何通用签票接口；票据带 purpose+aud=executor。
 

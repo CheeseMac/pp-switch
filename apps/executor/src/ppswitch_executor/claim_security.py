@@ -40,6 +40,11 @@ from typing import Any
 
 from ppswitch_core.errors import ApiError, ErrorCode
 
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 TICKET_PURPOSES = ("verify", "discover")
 CLAIM_PURPOSE = "keyring.claim"
 ATTEST_TTL_S = 300.0
@@ -403,6 +408,49 @@ class ClaimSecurity:
                 raise RuntimeError(
                     "PP_SWITCH_CONTROL_URL is mandatory in shared-keyring mode "
                     "(claim revocation freshness)"
+                )
+            # key anti-misuse: authorization signing keys must never equal
+            # the transport token, and the four dedicated keys must be
+            # pairwise distinct (a copy-pasted config collapses the trust
+            # channels FIX-02 separated)
+            same_as_token = [
+                name for name, value in (
+                    ("PP_SWITCH_CLAIM_TICKET_KEY", self.claim_ticket_key),
+                    ("PP_SWITCH_PLAN_SIGNING_KEY", self.plan_signing_key),
+                ) if value == internal_token
+            ]
+            if same_as_token:
+                raise RuntimeError(
+                    "Authorization signing keys must differ from the internal "
+                    f"token: {', '.join(same_as_token)}"
+                )
+            seen: dict[str, str] = {}
+            for name, value in (
+                ("PP_SWITCH_PIN_KEY", self.pin_key),
+                ("PP_SWITCH_ATTEST_KEY", self.attest_key or ""),
+                ("PP_SWITCH_CLAIM_TICKET_KEY", self.claim_ticket_key),
+                ("PP_SWITCH_PLAN_SIGNING_KEY", self.plan_signing_key),
+            ):
+                if not value:
+                    continue
+                if value in seen:
+                    raise RuntimeError(
+                        f"{name} must differ from {seen[value]} "
+                        "(dedicated keys must be pairwise distinct)"
+                    )
+                seen[value] = name
+            # Windows closeout (scoped acceptance 2026-10-18): the local
+            # attestation channel needs an OS-isolated listener. POSIX
+            # gets the 0600 AF_UNIX socket inside the 0700 directory;
+            # Python stdlib cannot establish NTFS ACLs on Windows, so
+            # shared mode REFUSES to start there instead of pretending
+            # the loopback fallback carries the same guarantee
+            if _is_windows():
+                raise RuntimeError(
+                    "Shared-keyring mode is not supported on Windows yet: the "
+                    "local attestation channel requires NTFS ACL isolation "
+                    "which the Python standard library cannot establish "
+                    "(docs/41 section 8.1). Refusing to start."
                 )
             # eager: the CLI on this machine must find the nonce file the
             # moment the executor is up (OS-permission-protected directory)

@@ -151,7 +151,7 @@ POSIX 为 AF_UNIX socket（0600，连接本身受 OS 文件权限门禁，远程
 | R07 | HTTP attest 端点全模式 404（含真 nonce+令牌） | `TestSharedModeProofs::test_r07` |
 | R08 | 本地通道签发可用（现有共享首claim流程即经通道） | `TestSharedModeProofs::test_first_claim_requires_proof_and_succeeds_with_it` |
 | R09 | nonce 成功即消费，旧值重放拒绝 | `TestSharedModeProofs::test_r09` |
-| R10 | 无保护目录内容不可达通道 | `TestSharedModeProofs::test_r10` |
+| R10 | ~~无保护目录内容不可达通道~~（本轮替换为真实用例，见 §7） | `TestLocalProofOsIsolation::test_r10_local_proof_files_are_os_restricted` |
 | R11 | 票据受众不符拒绝 | `TestFix02KeySeparation::test_r11` |
 | R12 | attestation 绑定错码哈希兑换拒绝 | `TestSharedModeProofs::test_wrong_code_or_nonce_never_attests_or_redeems` |
 
@@ -171,3 +171,43 @@ PP_SWITCH_CONTROL_URL=http://<control>:8911
 
 回归基线：A1–A8/T1–T8 全部保持、FEAT-03/04/05A 回归、M2 install
 smoke、真实 PostgreSQL matrix、全量 CI 六 job + Security gates。
+
+## 7. Windows 收口（2026-10-18，限定范围验收后）
+
+评审复核（基线 `26e64b2`）：POSIX 共享路径定向整改**正式关闭**；
+Windows 共享模式因 Python 标准库无法建立 NTFS ACL 而证据不足，
+不予放行。按评审给出的最小处理选项执行收口：
+
+1. **Windows shared 拒绝启动（R13）**：`ClaimSecurity` 在 Windows
+   上检测到 `PP_SWITCH_SHARED_KEYRING=true` 即拒启（错误信息指向
+   docs/41 §8.1）。回环降级不再作为隔离保证——宁可拒绝也不假装
+   等价。带跨用户 ACL 测试的实现（如 pywin32）留作后续独立提案，
+   届时 Windows shared 才可能放行。平台门控同步落在测试层：shared
+   相关测试在 Windows 跳过（CI linux job 全量执行），Windows CI
+   job 保持绿。
+2. **密钥防误用（R14/R15）**：shared 启动时（executor 与 control
+   双侧）拒绝 `K_claim_ticket`/`K_plan_signing` 与内部令牌同值，
+   且四把专用密钥（pin/attest/ticket/plan）两两互异——复制粘贴
+   配置直接拒启，不给"密钥分离"留静默退化路径。
+3. **R10 落实为真实用例**：上一轮 docs/42 把 R10 映射到了一个实
+   际不存在的用例（共享测试重写时的遗漏，评审抓得对）。现落地
+   为 `TestLocalProofOsIsolation::test_r10_local_proof_files_are_
+   os_restricted`（POSIX 实测 attest 目录 0700、local.nonce 0600、
+   attest.sock 0600，且无保护目录内容时通道不可达）；Windows 跳
+   过（该平台 shared 拒启）。
+
+### 补充测试映射
+
+| # | 断言 | 落点 |
+| --- | --- | --- |
+| R13 | Windows + shared → RuntimeError 拒启 | `TestWindowsSharedRefusal::test_r13` |
+| R14/R14b | executor 拒绝授权密钥=传输令牌 / 密钥两两同值 | `TestKeyAntiMisuse` |
+| R15/R15b | control 侧同规则拒启 | `TestKeyAntiMisuse` |
+| R10（真实） | POSIX 文件权限位实测 + 无保护目录不可达 | `TestLocalProofOsIsolation::test_r10` |
+
+### 验收状态（沿用评审裁决）
+
+- 个人单用户 Alpha：✅ 不变；
+- **POSIX 共享 Keyring 开发态：✅ 验收通过**（基线 `26e64b2`）；
+- Windows 共享多用户隔离：**待 ACL 证据**（现拒启，R13 守门）；
+- 企业生产 SECRET-06 Gate：未关闭（生产 SecretProvider 另案）。

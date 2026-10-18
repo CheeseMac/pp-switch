@@ -12,6 +12,7 @@ tests/e2e/test_keyring_isolation.py instead.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import uuid
@@ -122,6 +123,8 @@ def personal(harness, fake_keyring, tmp_path):
 
 @pytest.fixture()
 def shared_stack(harness, fake_keyring, tmp_path):
+    if os.name == "nt":
+        pytest.skip("shared-keyring mode refuses to start on Windows (ACL closeout pending)")
     return _build_stack(harness, tmp_path, shared=True)
 
 
@@ -782,3 +785,117 @@ def _workspace_id(harness, slug_prefix: str):
         return row.id
     finally:
         session.close()
+
+
+class TestWindowsSharedRefusal:
+    """R13 (Windows closeout): shared mode REFUSES to start on Windows -
+    Python stdlib cannot establish the NTFS ACL isolation the local
+    attestation channel requires, and a loopback fallback would not carry
+    the same guarantee (scoped acceptance 2026-10-18)."""
+
+    def test_r13_windows_shared_refuses_to_start(self, tmp_path, monkeypatch):
+        import ppswitch_executor.claim_security as claim_security
+
+        monkeypatch.setattr(claim_security, "_is_windows", lambda: True)
+        from ppswitch_executor.main import ExecutorSettings
+        from ppswitch_executor.main import create_app as create_executor_app
+
+        with pytest.raises(RuntimeError, match="Windows"):
+            create_executor_app(ExecutorSettings(
+                demo_mode=True, shared_keyring=True,
+                pin_key="k" * 8, attest_key="a" * 8,
+                claim_ticket_key="t" * 8, plan_signing_key="p" * 8,
+                local_attest_dir=str(tmp_path), control_url="http://127.0.0.1:9",
+            ))
+
+
+class TestKeyAntiMisuse:
+    """R14/R15: authorization keys must never equal the transport token
+    nor each other - on both the executor and the control side."""
+
+    _BASE = dict(
+        demo_mode=True, shared_keyring=True,
+        pin_key="k" * 8, attest_key="a" * 8,
+        claim_ticket_key="t" * 8, plan_signing_key="p" * 8,
+        control_url="http://127.0.0.1:9",
+    )
+
+    def test_r14_executor_rejects_key_equal_to_transport_token(self, tmp_path, monkeypatch):
+        import ppswitch_executor.claim_security as claim_security
+
+        monkeypatch.setattr(claim_security, "_is_windows", lambda: False)
+        from ppswitch_executor.main import ExecutorSettings
+        from ppswitch_executor.main import create_app as create_executor_app
+
+        with pytest.raises(RuntimeError, match="differ from the internal"):
+            create_executor_app(ExecutorSettings(
+                local_attest_dir=str(tmp_path),
+                claim_ticket_key="dev-internal-token-synthetic",
+                **{k: v for k, v in self._BASE.items() if k != "claim_ticket_key"},
+            ))
+
+    def test_r14b_executor_rejects_pairwise_equal_keys(self, tmp_path, monkeypatch):
+        import ppswitch_executor.claim_security as claim_security
+
+        monkeypatch.setattr(claim_security, "_is_windows", lambda: False)
+        from ppswitch_executor.main import ExecutorSettings
+        from ppswitch_executor.main import create_app as create_executor_app
+
+        with pytest.raises(RuntimeError, match="pairwise distinct"):
+            create_executor_app(ExecutorSettings(
+                local_attest_dir=str(tmp_path),
+                attest_key="t" * 8,  # same value as claim_ticket_key
+                **{k: v for k, v in self._BASE.items() if k != "attest_key"},
+            ))
+
+    def test_r15_control_rejects_keys_equal_to_transport_token(self):
+        from ppswitch_control.app import _validate_shared_keyring_settings
+        from ppswitch_control.settings import ControlSettings
+
+        settings = ControlSettings(
+            db_url="sqlite:///:memory:", shared_keyring=True, namespace_id="x",
+            claim_ticket_key="dev-internal-token-synthetic",
+            plan_signing_key="p" * 8,
+        )
+        with pytest.raises(RuntimeError, match="CLAIM_TICKET_KEY"):
+            _validate_shared_keyring_settings(settings)
+
+    def test_r15b_control_rejects_mutually_equal_keys(self):
+        from ppswitch_control.app import _validate_shared_keyring_settings
+        from ppswitch_control.settings import ControlSettings
+
+        settings = ControlSettings(
+            db_url="sqlite:///:memory:", shared_keyring=True, namespace_id="x",
+            claim_ticket_key="same-value-synthetic",
+            plan_signing_key="same-value-synthetic",
+        )
+        with pytest.raises(RuntimeError, match="must differ"):
+            _validate_shared_keyring_settings(settings)
+
+
+class TestLocalProofOsIsolation:
+    """R10 (real, POSIX): the local proof artifacts carry OS permission
+    bits that deny group/other access - the file-level half of the local
+    channel's OS isolation. Skipped on Windows, where shared mode now
+    refuses to start at all (R13)."""
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    def test_r10_local_proof_files_are_os_restricted(self, harness, shared_stack, tmp_path):
+        import stat
+
+        attest_dir = shared_stack["attest_dir"]
+        dir_mode = stat.S_IMODE(os.stat(attest_dir).st_mode)
+        assert dir_mode & 0o077 == 0, f"attest dir too open: {oct(dir_mode)}"
+        nonce_mode = stat.S_IMODE(os.stat(attest_dir / "local.nonce").st_mode)
+        assert nonce_mode == 0o600, f"nonce too open: {oct(nonce_mode)}"
+        sock_mode = stat.S_IMODE(os.stat(attest_dir / "attest.sock").st_mode)
+        assert sock_mode == 0o600, f"socket too open: {oct(sock_mode)}"
+        # dialing from a directory WITHOUT the protected contents fails:
+        # the channel is unreachable without local access to them
+        from ppswitch_secrets.local_channel import local_attest_request
+
+        reply = local_attest_request(str(tmp_path / "nowhere"), {
+            "name": "x", "pairing_code": "claim-1234",
+            "ticket": "t" * 40, "local_nonce": "n" * 64,
+        })
+        assert "error" in reply

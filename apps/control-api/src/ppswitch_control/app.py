@@ -73,6 +73,18 @@ def _validate_shared_keyring_settings(settings: ControlSettings) -> None:
         problems.append("PP_SWITCH_CLAIM_TICKET_KEY")
     if not settings.plan_signing_key:
         problems.append("PP_SWITCH_PLAN_SIGNING_KEY")
+    # key anti-misuse: authorization signing keys must never equal the
+    # transport token nor each other (a copy-pasted config would collapse
+    # the trust channels FIX-02 separated)
+    if settings.claim_ticket_key and settings.claim_ticket_key == settings.internal_token:
+        problems.append("PP_SWITCH_CLAIM_TICKET_KEY (must differ from the internal token)")
+    if settings.plan_signing_key and settings.plan_signing_key == settings.internal_token:
+        problems.append("PP_SWITCH_PLAN_SIGNING_KEY (must differ from the internal token)")
+    if (
+        settings.claim_ticket_key
+        and settings.claim_ticket_key == settings.plan_signing_key
+    ):
+        problems.append("PP_SWITCH_CLAIM_TICKET_KEY/PP_SWITCH_PLAN_SIGNING_KEY (must differ)")
     if os.environ.get("PP_SWITCH_NAMESPACE_ID") is None and settings.namespace_id == "local":
         problems.append("PP_SWITCH_NAMESPACE_ID")
     if problems:
