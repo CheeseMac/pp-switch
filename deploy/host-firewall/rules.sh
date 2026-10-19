@@ -88,18 +88,21 @@ apply_iptables() {
   rollback_quiet
   : >"$STATE_FILE"
 
-  insert_rule DOCKER-USER 1 -s "$EGRESS" -m comment \
-    --comment "$TAG:egress-subnet-drop" -j DROP
-  insert_rule DOCKER-USER 2 -s "$INTERNAL" -m comment \
-    --comment "$TAG:internal-drop" -j DROP
-  insert_rule DOCKER-USER 3 -s "$GATEWAY_IP/32" -d "$APPROVED_CIDR" -p tcp \
-    --dport "$APPROVED_PORT" -m comment --comment "$TAG:gw-approved" -j ACCEPT
-  insert_rule DOCKER-USER 4 -s "$INTERNAL" -p tcp --dport 53 -m comment \
-    --comment "$TAG:dns-tcp" -j ACCEPT
-  insert_rule DOCKER-USER 5 -s "$INTERNAL" -p udp --dport 53 -m comment \
-    --comment "$TAG:dns-udp" -j ACCEPT
-  insert_rule DOCKER-USER 6 -s "$INTERNAL" -d "$INTERNAL" -m comment \
+  # physical order after insertion: intra, dns-udp, dns-tcp, gw-approved,
+  # internal-drop, egress-subnet-drop - the gateway identity ACCEPT MUST
+  # precede the subnet drops or the gateway drops itself (CI iteration 8)
+  insert_rule DOCKER-USER 1 -s "$INTERNAL" -d "$INTERNAL" -m comment \
     --comment "$TAG:intra-internal" -j ACCEPT
+  insert_rule DOCKER-USER 2 -s "$INTERNAL" -p udp --dport 53 -m comment \
+    --comment "$TAG:dns-udp" -j ACCEPT
+  insert_rule DOCKER-USER 3 -s "$INTERNAL" -p tcp --dport 53 -m comment \
+    --comment "$TAG:dns-tcp" -j ACCEPT
+  insert_rule DOCKER-USER 4 -s "$GATEWAY_IP/32" -d "$APPROVED_CIDR" -p tcp \
+    --dport "$APPROVED_PORT" -m comment --comment "$TAG:gw-approved" -j ACCEPT
+  insert_rule DOCKER-USER 5 -s "$INTERNAL" -m comment \
+    --comment "$TAG:internal-drop" -j DROP
+  insert_rule DOCKER-USER 6 -s "$EGRESS" -m comment \
+    --comment "$TAG:egress-subnet-drop" -j DROP
   echo "iptables rules applied (DOCKER-USER, tag $TAG)"
 }
 
