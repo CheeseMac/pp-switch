@@ -209,7 +209,7 @@ log "routed targets: approved=$APPROVED_IP:$APPROVED_PORT deny=$DENY_IP:$DENY_PO
 # attached to the egress network" (errata F2 scenario).
 docker rm -f dep04-misexec >/dev/null 2>&1 || true
 docker run -d --name dep04-misexec --network "$EGRESS_NET" \
-  ppswitch-control sleep infinity >/dev/null
+  pp-switch-control sleep infinity >/dev/null
 MISEXEC_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' dep04-misexec)
 log "misattached stand-in executor: dep04-misexec ip=$MISEXEC_IP (egress-only)"
 
