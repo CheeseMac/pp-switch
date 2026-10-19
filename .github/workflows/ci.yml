@@ -112,6 +112,31 @@ jobs:
       - name: Fresh-install verification
         run: uv run python scripts/verify-install.py
 
+  host-firewall:
+    name: AUD-DEP-04 host firewall matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install probe tooling
+        run: sudo apt-get update && sudo apt-get install -y conntrack
+
+      # docs/43: the ubuntu-latest runner is a full VM with its own
+      # kernel; DOCKER-USER / nftables forward-hook rules land in a REAL
+      # host netns - reproducible host-level evidence on every run.
+      # Both firewall backends run the FULL probe matrix (errata ruling 3);
+      # evidence log is uploaded as an artifact (V7).
+      - name: Host FORWARD-path verification (DEP-04)
+        run: sudo bash deploy/host-firewall/verify-host-firewall.sh
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dep04-host-firewall-evidence
+          path: deploy/host-firewall/evidence-*.log
+          if-no-files-found: warn
+
   docker-deploy:
     name: PR-QA-06 docker deploy matrix
     runs-on: ubuntu-latest
