@@ -104,14 +104,16 @@ counter_ipt() {
     | head -1 | sed -E 's/^\[([0-9]+):.*/\1/' | grep -E '^[0-9]+$' || echo 0
 }
 counter_nft() {
-  nft list chain inet ppswitch_dep04 fwd 2>/dev/null \
+  nft list table inet ppswitch_dep04 2>/dev/null \
     | grep -F -- "comment \"ppswitch-dep04:$1\"" \
-    | grep -oE 'packets [0-9]+' | head -1 | awk '{print $2}' || echo 0
+    | grep -oE 'packets [0-9]+' | head -1 | awk '{print $2}'
+  # empty output is normalized to 0 by the callers' arithmetic context
 }
 
 assert_counter_delta() { # <backend ipt|nft> <id> <before> <label>
   local backend="$1" id="$2" before="$3" label="$4" now
   if [ "$backend" = ipt ]; then now=$(counter_ipt "$id"); else now=$(counter_nft "$id"); fi
+  now="${now:-0}"
   if [ "$now" -gt "$before" ]; then
     verdict ok "$label" "rule ppswitch-dep04:$id counter $before -> $now (real FORWARD hit)"
   else
@@ -257,11 +259,13 @@ run_matrix() {
       --internal "$INTERNAL_CIDR" --egress "$EGRESS_CIDR" \
       --gateway-ip "$GATEWAY_IP" \
       --approved "$APPROVED_IP/32:$APPROVED_PORT"
+    iptables-save -c 2>/dev/null | grep -F -- '-m comment --comment "ppswitch-dep04' | tee -a "$EVIDENCE"
   else
     bash "$RULES" apply-nftables \
       --internal "$INTERNAL_CIDR" --egress "$EGRESS_CIDR" \
       --gateway-ip "$GATEWAY_IP" \
       --approved "$APPROVED_IP/32:$APPROVED_PORT"
+    nft list table inet ppswitch_dep04 2>/dev/null | tee -a "$EVIDENCE"
   fi
 
   local c_int c_gw c_esub
@@ -270,6 +274,7 @@ run_matrix() {
   else
     c_int=$(counter_nft internal-drop); c_gw=$(counter_nft gw-approved); c_esub=$(counter_nft egress-subnet-drop)
   fi
+  c_int="${c_int:-0}"; c_gw="${c_gw:-0}"; c_esub="${c_esub:-0}"
   log "counters before probes: internal-drop=$c_int gw-approved=$c_gw egress-subnet-drop=$c_esub"
 
   section "matrix [$backend]: P1 intra-subnet service reachability"
@@ -309,7 +314,7 @@ run_matrix() {
       && verdict ok "internal-drop rule installed (defense-in-depth)" "no route expected on correct topology; counter delta not claimed" \
       || verdict bad "internal-drop rule installed" "rule missing"
   else
-    nft list chain inet ppswitch_dep04 fwd 2>/dev/null | grep -qF 'internal-drop' \
+    nft list table inet ppswitch_dep04 2>/dev/null | grep -qF 'internal-drop' \
       && verdict ok "internal-drop rule installed (defense-in-depth)" "see ipt note" \
       || verdict bad "internal-drop rule installed" "rule missing"
   fi
@@ -416,6 +421,20 @@ for svc in executor egress-gateway; do
     docker run -d --name dep04-occupier --network "$INTERNAL_NET" \
       pp-switch-control sleep 300 >/dev/null
     docker compose up -d --force-recreate "$svc" >/dev/null 2>&1
+    new_ip=$(docker inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}" "$(container_id $svc)")
+  fi
+  if [ "$new_ip" = "${IP_BEFORE[$svc]}" ]; then
+    # IPAM reuses freed low addresses deterministically; force a REAL
+    # re-address at runtime (docker network disconnect + connect --ip) -
+    # an explicit address change on the live network, which the
+    # subnet-scoped host rules must survive
+    local cid current_ip target_ip
+    cid=$(container_id "$svc")
+    current_ip=$(docker inspect "$cid" --format "$(printf '{{(index .NetworkSettings.Networks "%s").IPAddress}}' "$INTERNAL_NET")")
+    last_octet=$(( ( ${current_ip##*.} % 200 ) + 50 ))
+    target_ip="172.28.0.$last_octet"
+    docker network disconnect "$INTERNAL_NET" "$cid"
+    docker network connect --ip "$target_ip" "$INTERNAL_NET" "$cid"
     new_ip=$(docker inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}" "$(container_id $svc)")
   fi
   if [ "$new_ip" != "${IP_BEFORE[$svc]}" ]; then
