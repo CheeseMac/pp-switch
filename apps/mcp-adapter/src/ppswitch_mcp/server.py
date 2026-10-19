@@ -21,7 +21,11 @@ def build_mcp_server(control_url: str, token: str, *, client=None):
     from ppswitch_mcp.registry import register_capability_tools
 
     if client is None:
-        client = PPSwitchClient.from_http(control_url, token)
+        # trust_env=False: ambient system proxies must never intercept the
+        # control API (a Windows proxy hijacking 127.0.0.1 breaks the
+        # first real-client trial - docs/31 pitfall 1; every other client
+        # in this repo already disables trust_env)
+        client = PPSwitchClient.from_http(control_url, token, trust_env=False)
     server = MCPServer(
         "pp-switch",
         instructions=(

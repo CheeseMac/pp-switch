@@ -10,6 +10,40 @@
 > 下一轮开发建议（需单独提案后动工）：共享执行器的 Keyring
 > 多用户所有权隔离（Gate R1 SECRET-06 部署前置项，docs/37 登记）。
 
+## 0. 试用日一页清单（Windows 个人 Alpha）
+
+> 目标：作为第一个真实用户，从零完成一次 **发现 → 发布 → 切换 →
+> Agent 调用 → 撤权**，并按 §6 记录表留下证据（这是 M2 整体签收的
+> 唯一缺口）。预计 60–90 分钟。
+
+| # | 步骤 | 预期 | 证据（记录表列） |
+| --- | --- | --- | --- |
+| T1 | `uv sync --all-packages && pnpm install` | 无错误 | — |
+| T2 | `uv run python scripts/verify-install.py` | 末行 `INSTALL VERIFIED (9 steps)` | 截图终端输出 |
+| T3 | `uv run python scripts/dev-up.py --ui` | control 8911 / executor 8912 / mock CRM 8913 / console 5173 全起 | — |
+| T4 | 新终端 `uv run python scripts/seed-demo.py` | 输出三个 principal 与 token 路径 `data/dev-tokens.json` | — |
+| T5 | 浏览器开 http://localhost:5173 ，Alice 登录 | 登录页列出 Alice/Carol | 截图 |
+| T6 | Discovery 页导入 `tests/fixtures/synthetic-har/crm.har.json` | 2 个候选操作出现；故意导入含密钥形状的文件会被 422 拒（可选负向） | 截图候选列表 |
+| T7 | Wizard 走完 `GET /api/customers/{id}`：配置→试调→创建草稿 | 试调返回 Acme Industries（数据集 A） | 截图试调结果 |
+| T8 | 切 Carol 登录，Wizard 页继续 review→verify→publish | 状态变为 published；Alice 不能自审（换回 Alice 时按钮不可用） | 截图发布态 |
+| T9 | Alice：Profiles 建 Demo A/B 两个档案，一键切换，Invocations 页调用 | A=Acme Industries，切换后 B=Globex (QA copy)；同一工具名 | 两次调用结果截图 |
+| T10 | 按 §4 接入 Claude Desktop 或 Cursor，让 AI 列出并调用工具 | tools/list 恰好只含授权工具；调用返回守卫投影结果 | 聊天截图（脱敏令牌） |
+| T11 | 撤销 Agent 授权，再次让 AI 调用 | 被拒（CAPABILITY_NOT_FOUND，存在性不泄露） | 聊天截图 |
+| T12 | （可选）按 §3 装 Chrome 扩展，A1–A8 | 候选操作出现（零值骨架） | 按 §3 表格记录 |
+| T13 | 填写 §6 记录表（操作人/日期/环境），脱敏后归档 | 全行 通过 或标注失败现象 | 记录表本身 |
+
+**Windows 三个高频坑（都真踩过）**：
+1. **系统代理拦截 127.0.0.1**：若浏览器/客户端打不开 localhost，
+   检查系统代理设置，把 `localhost,127.0.0.1` 加入绕过列表
+   （pp-switch 自身所有出站 client 已 `trust_env=False`，含 MCP
+   适配器——GUI 客户端侧仍可能受代理影响）。
+2. **GUI 客户端找不到 `uv`**：Claude Desktop/Cursor 由 GUI 启动进程，
+   不继承终端 PATH。若 MCP 服务器连不上，把生成配置里的
+   `"command": "uv"` 换成绝对路径（终端 `where uv` 查看，形如
+   `C:\Users\84199\.local\bin\uv.exe`）。
+3. **端口占用**：8911–8914/5173 被占时 dev-up 会报错；关闭旧进程
+   （`netstat -ano | findstr 8911` → 任务管理器结束 PID）后重启。
+
 ## 1. 安装与一键自检
 
 系统要求：Python 3.12+、Node 20+、[uv](https://docs.astral.sh/uv/)、pnpm。
@@ -71,7 +105,42 @@ uv run python scripts/seed-demo.py
 
 ## 4. 实机验收剧本 B：Claude Desktop / Cursor 拉起 MCP（P0）
 
-前置：console 已发布至少一个能力（§2 步骤 3）。
+前置：console 已发布至少一个能力（§2 步骤 3）；`dev-up.py --ui`
+保持运行（MCP 适配器要连 control 8911）。
+
+**Windows 配置文件位置**（AgentAccess 页生成的 JSON 原样粘贴进
+`mcpServers` 字段即可）：
+
+| 客户端 | 配置文件 | 生效方式 |
+| --- | --- | --- |
+| Claude Desktop | `%APPDATA%\Claude\claude_desktop_config.json` | 完全退出 Claude（托盘图标右键退出）后重开 |
+| Cursor（全局） | `%USERPROFILE%\.cursor\mcp.json` | 重启 Cursor 或重连 MCP |
+| Cursor（单项目） | 项目内 `.cursor\mcp.json` | 同上 |
+
+生成的配置形状（令牌经 env 传递，绝不在命令行参数）：
+
+```json
+{
+  "mcpServers": {
+    "pp-switch": {
+      "command": "uv",
+      "args": ["run", "ppswitch-mcp"],
+      "env": {
+        "PP_SWITCH_CONTROL_URL": "http://127.0.0.1:8911",
+        "PP_SWITCH_DEV_TOKEN": "<AgentAccess 页显示的一次性令牌>"
+      }
+    }
+  }
+}
+```
+
+注意：`uv run ppswitch-mcp` 必须在仓库目录内启动（uv 需找到工作区），
+Claude Desktop/Cursor 默认工作目录不是仓库——两种解决方式：
+- 在 `args` 里加 `"--directory", "<仓库绝对路径>"`（uv 全局选项，
+  放在 `run` 之前），例如
+  `["--directory", "C:\\Users\\84199\\Documents\\workspace\\pp-switch", "run", "ppswitch-mcp"]`；
+- 或用 `uv tool install --editable . ` 之类全局安装（进阶，不推荐
+  首次试用使用）。推荐前者，AgentAccess 生成后手动补 `--directory`。
 
 | # | 操作 | 预期 |
 | --- | --- | --- |

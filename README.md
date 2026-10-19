@@ -156,6 +156,7 @@ uv run python scripts/seed-demo.py
 | **SECRET-06 交付记录（claim+配对证明+全长 MAC 钉扎+代际撤销）** | **[42-SECRET-06-DELIVERY](docs/42-SECRET-06-DELIVERY.md)** |
 | **DEP-04 宿主机防火墙设计（已批复实施，含勘误）** | **[43-PROPOSAL-DEP-04-HOST-FIREWALL](docs/43-PROPOSAL-DEP-04-HOST-FIREWALL.md)** |
 | **DEP-04 交付记录（FORWARD 路径实测装置 + CI host-firewall job）** | **[44-DEP-04-HOST-FIREWALL-DELIVERY](docs/44-DEP-04-HOST-FIREWALL-DELIVERY.md)** |
+| **交接文档（M2 试用/归档会话入口）** | **[45-HANDOVER-M2-TRIAL](docs/45-HANDOVER-M2-TRIAL.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 
