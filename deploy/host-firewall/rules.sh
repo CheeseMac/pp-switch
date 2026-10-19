@@ -125,7 +125,7 @@ apply_nftables() {
   local script="${TMPDIR:-/tmp}/ppswitch-dep04.nft"
   cat >"$script" <<NFT
 table inet ppswitch_dep04 {
-  chain fwd {
+  chain dep04fwd {
     type filter hook forward priority 0;
     ip saddr $INTERNAL ip daddr $INTERNAL counter accept comment "$TAG:intra-internal"
     ip saddr $INTERNAL udp dport 53 counter accept comment "$TAG:dns-udp"
