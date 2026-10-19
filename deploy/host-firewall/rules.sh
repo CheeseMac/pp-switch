@@ -44,6 +44,8 @@ INPUT_PORT_VALUE=""
 usage() { grep '^#' "$0" | sed -n '2,40p' >&2; exit 2; }
 
 parse_args() {
+  local require_all="${1:-yes}"
+  shift || true
   while [ $# -gt 0 ]; do
     case "$1" in
       --internal) INTERNAL="$2"; shift 2 ;;
@@ -54,9 +56,11 @@ parse_args() {
       *) usage ;;
     esac
   done
-  for var in INTERNAL EGRESS GATEWAY_IP APPROVED; do
-    [ -n "${!var:-}" ] || { echo "missing --$var" >&2; usage; }
-  done
+  if [ "$require_all" = yes ]; then
+    for var in INTERNAL EGRESS GATEWAY_IP APPROVED; do
+      [ -n "${!var:-}" ] || { echo "missing --$var" >&2; usage; }
+    done
+  fi
   APPROVED_PORT="${APPROVED##*:}"
   APPROVED_CIDR="${APPROVED%%:*}"
 }
@@ -75,8 +79,9 @@ insert_rule() {
 }
 
 add_input_drop() {
-  parse_args "$@"
+  parse_args no "$@"
   [ -n "$INPUT_PORT_VALUE" ] || { echo "missing --port" >&2; usage; }
+  [ -n "$INTERNAL" ] || { echo "missing --internal" >&2; usage; }
   insert_rule INPUT 1 \
     -s "$INTERNAL" -p tcp --dport "$INPUT_PORT_VALUE" \
     -m comment --comment "$TAG:input-drop" -j DROP
