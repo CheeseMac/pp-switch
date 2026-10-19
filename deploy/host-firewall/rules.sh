@@ -89,18 +89,20 @@ apply_iptables() {
 }
 
 rollback_iptables_quiet() {
-  # delete by descending LINE NUMBER while any tagged rule exists; immune
-  # to backend spec-normalization quirks that break exact-spec -D
-  local tool chain lines n
-  for tool in iptables ip6tables; do
-    command -v "$tool" >/dev/null 2>&1 || continue
-    for chain in DOCKER-USER INPUT; do
-      $tool -w -n -L "$chain" >/dev/null 2>&1 || continue
-      while :; do
-        lines=$($tool -w -n -L "$chain" --line-numbers 2>/dev/null           | awk '/ppswitch-dep04/{print $1; exit}')
-        [ -n "$lines" ] || break
-        $tool -w -D "$chain" "$lines"           || { echo "failed to remove $chain rule #$lines" >&2; exit 1; }
-      done
+  # drive off *-save output (comments are ALWAYS printed there, unlike
+  # iptables -L) and delete by chain + argv spec; covers DOCKER-USER and
+  # the labelled INPUT hardening on iptables and ip6tables
+  local saver tool spec chain
+  for saver in iptables-save ip6tables-save; do
+    command -v "$saver" >/dev/null 2>&1 || continue
+    tool="${saver%-save}"
+    while spec=$($saver 2>/dev/null | grep -F -- "-m comment --comment \"$TAG" | head -1); [ -n "$spec" ]; do
+      chain=$(printf '%s\n' "$spec" | awk '{print $2}')
+      # shellcheck disable=SC2086
+      if ! $tool -w -D "$chain" $(printf '%s\n' "$spec" | cut -d' ' -f3-); then
+        echo "failed to remove: $spec" >&2
+        exit 1
+      fi
     done
   done
 }
@@ -115,7 +117,7 @@ apply_nftables() {
   parse_args "$@"
   rollback_nftables_quiet
   nft add table "$NFT_TABLE"
-  nft add chain "$NFT_TABLE" fwd '{ type filter hook forward priority 0; policy accept; }'
+  nft add chain "$NFT_TABLE" fwd '{ type filter hook forward priority 0; }'
   nft add rule "$NFT_TABLE" fwd ip saddr "$INTERNAL" ip daddr "$INTERNAL" \
     counter accept comment \""$TAG:intra-internal"\"
   nft add rule "$NFT_TABLE" fwd ip saddr "$INTERNAL" udp dport 53 \
