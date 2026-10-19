@@ -428,7 +428,6 @@ for svc in executor egress-gateway; do
     # re-address at runtime (docker network disconnect + connect --ip) -
     # an explicit address change on the live network, which the
     # subnet-scoped host rules must survive
-    local cid current_ip target_ip
     cid=$(container_id "$svc")
     current_ip=$(docker inspect "$cid" --format "$(printf '{{(index .NetworkSettings.Networks "%s").IPAddress}}' "$INTERNAL_NET")")
     last_octet=$(( ( ${current_ip##*.} % 200 ) + 50 ))
