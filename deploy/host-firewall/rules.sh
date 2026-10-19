@@ -120,20 +120,24 @@ apply_nftables() {
   parse_args "$@"
   rollback_quiet
   : >"$STATE_FILE"
-  nft add table $NFT_TABLE
-  nft add chain $NFT_TABLE fwd '{ type filter hook forward priority 0; }'
-  nft add rule $NFT_TABLE fwd ip saddr "$INTERNAL" ip daddr "$INTERNAL" \
-    counter accept comment \""$TAG:intra-internal"\"
-  nft add rule $NFT_TABLE fwd ip saddr "$INTERNAL" udp dport 53 \
-    counter accept comment \""$TAG:dns-udp"\"
-  nft add rule $NFT_TABLE fwd ip saddr "$INTERNAL" tcp dport 53 \
-    counter accept comment \""$TAG:dns-tcp"\"
-  nft add rule $NFT_TABLE fwd ip saddr "$GATEWAY_IP" ip daddr "$APPROVED_CIDR" \
-    tcp dport "$APPROVED_PORT" counter accept comment \""$TAG:gw-approved"\"
-  nft add rule $NFT_TABLE fwd ip saddr "$INTERNAL" \
-    counter drop comment \""$TAG:internal-drop"\"
-  nft add rule $NFT_TABLE fwd ip saddr "$EGRESS" \
-    counter drop comment \""$TAG:egress-subnet-drop"\"
+  # feed nft from a FILE (canonical parsing path) - the runner's nft
+  # CLI mangles brace-blocks passed as argv (CI iteration 11/12)
+  local script="${TMPDIR:-/tmp}/ppswitch-dep04.nft"
+  cat >"$script" <<NFT
+table inet ppswitch_dep04 {
+  chain fwd {
+    type filter hook forward priority 0;
+    ip saddr $INTERNAL ip daddr $INTERNAL counter accept comment "$TAG:intra-internal"
+    ip saddr $INTERNAL udp dport 53 counter accept comment "$TAG:dns-udp"
+    ip saddr $INTERNAL tcp dport 53 counter accept comment "$TAG:dns-tcp"
+    ip saddr $GATEWAY_IP ip daddr $APPROVED_CIDR tcp dport $APPROVED_PORT counter accept comment "$TAG:gw-approved"
+    ip saddr $INTERNAL counter drop comment "$TAG:internal-drop"
+    ip saddr $EGRESS counter drop comment "$TAG:egress-subnet-drop"
+  }
+}
+NFT
+  nft -f "$script"
+  rm -f "$script"
   echo "nftables rules applied (table $NFT_TABLE)"
 }
 
