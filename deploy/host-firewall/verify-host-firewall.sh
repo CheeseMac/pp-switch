@@ -363,8 +363,7 @@ run_matrix() {
   c_input=$(iptables-save -c 2>/dev/null | grep -F -- '--comment "ppswitch-dep04:input-drop"' \
     | head -1 | sed -E 's/^\[([0-9]+):.*/\1/' || echo 0)
   if [ "$c_input" = "" ]; then c_input=0; fi
-  iptables -w -I INPUT -s "$INTERNAL_CIDR" -p tcp --dport "$INPUT_PORT" -m comment \
-    --comment "ppswitch-dep04:input-drop" -j DROP
+  bash "$RULES" add-input-drop --internal "$INTERNAL_CIDR" --port "$INPUT_PORT" >/dev/null
   if probe "$EXEC_CID" 172.28.0.1 "$INPUT_PORT" blocked; then
     verdict ok "INPUT container->host service blocked" "labelled INPUT-path host hardening"
   else
