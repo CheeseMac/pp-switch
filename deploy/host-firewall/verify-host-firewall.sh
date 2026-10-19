@@ -62,7 +62,7 @@ cleanup() {
   ip link del veth-dep04d >/dev/null 2>&1
   ip netns del dep04-v6 >/dev/null 2>&1
   ip link del veth-dep04v6 >/dev/null 2>&1
-  docker rm -f dep04-dnat dep04-occupier >/dev/null 2>&1
+  docker rm -f dep04-dnat dep04-occupier dep04-misexec >/dev/null 2>&1
   docker network rm dep04v6 >/dev/null 2>&1
   docker compose down --remove-orphans >/dev/null 2>&1
   [ "$rc" -eq 0 ] && bash "$RULES" residue >/dev/null 2>&1 || true
@@ -200,19 +200,37 @@ SERVER_PIDS+=($!)
 
 log "routed targets: approved=$APPROVED_IP:$APPROVED_PORT deny=$DENY_IP:$DENY_PORT (both via veth, host FORWARD path)"
 
+# Vantage note (errata F1/F2, honest topology): on the CORRECT topology
+# the executor sits on the internal (internal: true) network and has NO
+# route to any external destination - that layer-1 isolation is asserted
+# below without counter claims. The host-rule layer needs a vantage that
+# actually HAS a route: dep04-misexec is the SAME executor image attached
+# ONLY to the routed egress network - exactly "an executor mistakenly
+# attached to the egress network" (errata F2 scenario).
+docker rm -f dep04-misexec >/dev/null 2>&1 || true
+docker run -d --name dep04-misexec --network "$EGRESS_NET" \
+  ppswitch-control sleep infinity >/dev/null
+MISEXEC_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' dep04-misexec)
+log "misattached stand-in executor: dep04-misexec ip=$MISEXEC_IP (egress-only)"
+
+# layer-1 (orchestration) isolation: executor on internal has no route
+probe "$EXEC_CID" "$APPROVED_IP" "$APPROVED_PORT" blocked \
+  && verdict ok "layer-1 executor (internal net) has no route" "orchestration-level isolation, no host rule involved" \
+  || verdict bad "layer-1 executor (internal net) has no route" "internal network unexpectedly routable"
+
 # PRE-PROOF (errata F1): with no rules applied, every target is genuinely
-# reachable - later blocks therefore mean firewall, not missing routing
-if probe "$EXEC_CID" "$APPROVED_IP" "$APPROVED_PORT" open; then
-  verdict ok "pre-proof executor->approved reachable (rules off)" "destination genuinely routable"
+# reachable from the ROUTED vantage - later blocks mean firewall
+if probe dep04-misexec "$APPROVED_IP" "$APPROVED_PORT" open; then
+  verdict ok "pre-proof misexec->approved reachable (rules off)" "destination genuinely routable"
 else
-  verdict bad "pre-proof executor->approved reachable (rules off)" "target unreachable BEFORE rules: rig broken, all later DROPs meaningless (errata F1)"
+  verdict bad "pre-proof misexec->approved reachable (rules off)" "target unreachable BEFORE rules: rig broken, later DROPs meaningless (errata F1)"
 fi
 probe "$GATE_CID" "$APPROVED_IP" "$APPROVED_PORT" open \
   && verdict ok "pre-proof gateway->approved reachable" "baseline" \
   || verdict bad "pre-proof gateway->approved reachable" "rig broken"
-probe "$EXEC_CID" "$DENY_IP" "$DENY_PORT" open \
-  && verdict ok "pre-proof executor->deny-target reachable" "baseline" \
-  || verdict bad "pre-proof executor->deny-target reachable" "rig broken"
+probe dep04-misexec "$DENY_IP" "$DENY_PORT" open \
+  && verdict ok "pre-proof misexec->deny-target reachable" "baseline" \
+  || verdict bad "pre-proof misexec->deny-target reachable" "rig broken"
 
 # ===========================================================================
 section "phase 2: DNAT published-port rig (errata F3)"
@@ -255,9 +273,11 @@ run_matrix() {
   log "counters before probes: internal-drop=$c_int gw-approved=$c_gw egress-subnet-drop=$c_esub"
 
   section "matrix [$backend]: P1 intra-subnet service reachability"
-  probe "$EXEC_CID" 172.28.0.3 8912 open \
-    && verdict ok "P1 executor->executor:8912 (intra internal)" "bridge-local, unaffected by FORWARD rules" \
-    || verdict bad "P1 intra" "internal service unreachable"
+  local CTRL_IP
+  CTRL_IP=$(docker inspect "$(container_id control)" --format "$(printf '{{(index .NetworkSettings.Networks "%s").IPAddress}}' "$INTERNAL_NET")")
+  probe "$EXEC_CID" "$CTRL_IP" 8911 open \
+    && verdict ok "P1 executor->control:8911 (intra internal)" "bridge-local, unaffected by FORWARD rules" \
+    || verdict bad "P1 intra" "control unreachable from executor"
 
   section "matrix [$backend]: P2 gateway egress to APPROVED target (F1+F2)"
   if probe "$GATE_CID" "$APPROVED_IP" "$APPROVED_PORT" open; then
@@ -267,26 +287,40 @@ run_matrix() {
   fi
   assert_counter_delta "$backend" gw-approved "$c_gw" "P2-counter [$backend]"
 
-  section "matrix [$backend]: P3 executor direct egress is DROPPED (F1+F3 scope)"
-  probe "$EXEC_CID" "$APPROVED_IP" "$APPROVED_PORT" blocked \
-    && verdict ok "P3 executor->approved blocked" "internal-drop" \
-    || verdict bad "P3 executor->approved blocked" "LEAK: direct egress works"
-  assert_counter_delta "$backend" internal-drop "$c_int" "P3-counter [$backend]"
+  section "matrix [$backend]: P3 misattached executor egress is DROPPED (F1+F2)"
+  probe dep04-misexec "$APPROVED_IP" "$APPROVED_PORT" blocked \
+    && verdict ok "P3 misexec->approved blocked" "egress-subnet identity drop" \
+    || verdict bad "P3 misexec->approved blocked" "LEAK: non-gateway egress works"
+  assert_counter_delta "$backend" egress-subnet-drop "$c_esub" "P3-counter [$backend]"
 
   section "matrix [$backend]: P3b never-approved routed target"
-  probe "$EXEC_CID" "$DENY_IP" "$DENY_PORT" blocked \
-    && verdict ok "P3b executor->deny-target blocked" "no allowlist entry, counter-proven below" \
-    || verdict bad "P3b executor->deny-target blocked" "LEAK"
-  assert_counter_delta "$backend" internal-drop "$c_int" "P3b-counter [$backend] (routed, pre-proven reachable)"
+  probe dep04-misexec "$DENY_IP" "$DENY_PORT" blocked \
+    && verdict ok "P3b misexec->deny-target blocked" "no allowlist entry, counter-proven below" \
+    || verdict bad "P3b misexec->deny-target blocked" "LEAK"
+  assert_counter_delta "$backend" egress-subnet-drop "$c_esub" "P3b-counter [$backend] (routed, pre-proven reachable)"
+
+  # internal-drop: on the CORRECT topology no internal-originated packet
+  # ever reaches FORWARD (layer-1 has no route) - the rule is the
+  # defense-in-depth layer; counter delta is NOT asserted because zero
+  # traffic is the expected healthy state
+  section "matrix [$backend]: layer-2 note (internal-drop rule present)"
+  if [ "$backend" = ipt ]; then
+    iptables-save -c 2>/dev/null | grep -qF -- '--comment "ppswitch-dep04:internal-drop"' \
+      && verdict ok "internal-drop rule installed (defense-in-depth)" "no route expected on correct topology; counter delta not claimed" \
+      || verdict bad "internal-drop rule installed" "rule missing"
+  else
+    nft list chain inet ppswitch_dep04 fwd 2>/dev/null | grep -qF 'internal-drop' \
+      && verdict ok "internal-drop rule installed (defense-in-depth)" "see ipt note" \
+      || verdict bad "internal-drop rule installed" "rule missing"
+  fi
 
   section "matrix [$backend]: F2 executor misattached to the routed egress network"
   docker network connect "$EGRESS_NET" "$EXEC_CID" 2>/dev/null || true
   if probe "$EXEC_CID" "$APPROVED_IP" "$APPROVED_PORT" blocked; then
-    verdict ok "F2 misattached executor still blocked" "subnet allow would have leaked (errata F2)"
+    verdict ok "F2 real executor misattached: still blocked" "layered: primary route stays internal (no route) AND host identity rule; counter proof carried by the P3 stand-in"
   else
-    verdict bad "F2 misattached executor still blocked" "CRITICAL: subnet-wide allow leaked to misattached executor"
+    verdict bad "F2 real executor misattached: still blocked" "CRITICAL: leak"
   fi
-  assert_counter_delta "$backend" egress-subnet-drop "$c_esub" "F2-counter [$backend]"
   probe "$GATE_CID" "$APPROVED_IP" "$APPROVED_PORT" open \
     && verdict ok "F2 gateway unaffected during misattach" "identity rule matched" \
     || verdict bad "F2 gateway unaffected during misattach" "regression"

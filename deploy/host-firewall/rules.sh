@@ -89,18 +89,17 @@ apply_iptables() {
 }
 
 rollback_iptables_quiet() {
-  local IPT=iptables
-  command -v iptables >/dev/null || IPT="/usr/sbin/iptables"
-  # delete by exact spec while any tagged rule exists; covers DOCKER-USER
-  # (FORWARD path) and INPUT (the explicitly-labelled supplementary host
-  # hardening) on both iptables and ip6tables
-  local chain tool
-  for tool in "$IPT" ip6tables; do
+  # delete by descending LINE NUMBER while any tagged rule exists; immune
+  # to backend spec-normalization quirks that break exact-spec -D
+  local tool chain lines n
+  for tool in iptables ip6tables; do
     command -v "$tool" >/dev/null 2>&1 || continue
     for chain in DOCKER-USER INPUT; do
-      while spec=$($tool -w -S "$chain" 2>/dev/null | grep -F -- "-m comment --comment \"$TAG" | head -1) && [ -n "$spec" ]; do
-        local del="${spec/#-A $chain/-D $chain}"
-        $tool -w $del || { echo "failed to remove: $del" >&2; exit 1; }
+      $tool -w -n -L "$chain" >/dev/null 2>&1 || continue
+      while :; do
+        lines=$($tool -w -n -L "$chain" --line-numbers 2>/dev/null           | awk '/ppswitch-dep04/{print $1; exit}')
+        [ -n "$lines" ] || break
+        $tool -w -D "$chain" "$lines"           || { echo "failed to remove $chain rule #$lines" >&2; exit 1; }
       done
     done
   done
