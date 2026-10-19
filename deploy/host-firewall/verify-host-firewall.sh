@@ -165,7 +165,7 @@ EG_SUBNET=$(docker network inspect "$EGRESS_NET" -f '{{(index .IPAM.Config 0).Su
   || verdict bad "internal subnet pinned" "expected $INTERNAL_CIDR got $INT_SUBNET"
 [ "$EG_SUBNET" = "$EGRESS_CIDR" ] && verdict ok "egress subnet pinned" "$EG_SUBNET" \
   || verdict bad "egress subnet pinned" "expected $EGRESS_CIDR got $EG_SUBNET"
-GATE_ACTUAL=$(docker inspect -f "{{.NetworkSettings.Networks.${EGRESS_NET}.IPAddress}}" "$GATE_CID")
+GATE_ACTUAL=$(docker inspect -f "{{(index .NetworkSettings.Networks "$EGRESS_NET").IPAddress}}" "$GATE_CID")
 [ "$GATE_ACTUAL" = "$GATEWAY_IP" ] && verdict ok "gateway static identity" "$GATE_ACTUAL" \
   || verdict bad "gateway static identity" "expected $GATEWAY_IP got $GATE_ACTUAL (F2 identity broken)"
 
@@ -389,7 +389,7 @@ for svc in executor egress-gateway; do
     verdict bad "drift [$svc] address changed" "could not force a change: item INCOMPLETE per errata F4"
   fi
 done
-GATE_ACTUAL=$(docker inspect -f "{{.NetworkSettings.Networks.${EGRESS_NET}.IPAddress}}" "$(container_id egress-gateway)")
+GATE_ACTUAL=$(docker inspect -f "{{(index .NetworkSettings.Networks "$EGRESS_NET").IPAddress}}" "$(container_id egress-gateway)")
 [ "$GATE_ACTUAL" = "$GATEWAY_IP" ] \
   && verdict ok "gateway static identity survives recreate" "$GATE_ACTUAL" \
   || verdict bad "gateway static identity survives recreate" "got $GATE_ACTUAL"
