@@ -19,7 +19,7 @@
 # Evidence:          deploy/host-firewall/evidence-<utc>.log (also stdout)
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 ROOT="$PWD"
 HF="$ROOT/deploy/host-firewall"
 EVIDENCE="$HF/evidence-$(date -u +%Y%m%dT%H%M%SZ).log"
