@@ -120,19 +120,19 @@ apply_nftables() {
   parse_args "$@"
   rollback_quiet
   : >"$STATE_FILE"
-  nft add table "$NFT_TABLE"
-  nft add chain "$NFT_TABLE" fwd '{ type filter hook forward priority 0; }'
-  nft add rule "$NFT_TABLE" fwd ip saddr "$INTERNAL" ip daddr "$INTERNAL" \
+  nft add table $NFT_TABLE
+  nft add chain $NFT_TABLE fwd '{ type filter hook forward priority 0; }'
+  nft add rule $NFT_TABLE fwd ip saddr "$INTERNAL" ip daddr "$INTERNAL" \
     counter accept comment \""$TAG:intra-internal"\"
-  nft add rule "$NFT_TABLE" fwd ip saddr "$INTERNAL" udp dport 53 \
+  nft add rule $NFT_TABLE fwd ip saddr "$INTERNAL" udp dport 53 \
     counter accept comment \""$TAG:dns-udp"\"
-  nft add rule "$NFT_TABLE" fwd ip saddr "$INTERNAL" tcp dport 53 \
+  nft add rule $NFT_TABLE fwd ip saddr "$INTERNAL" tcp dport 53 \
     counter accept comment \""$TAG:dns-tcp"\"
-  nft add rule "$NFT_TABLE" fwd ip saddr "$GATEWAY_IP" ip daddr "$APPROVED_CIDR" \
+  nft add rule $NFT_TABLE fwd ip saddr "$GATEWAY_IP" ip daddr "$APPROVED_CIDR" \
     tcp dport "$APPROVED_PORT" counter accept comment \""$TAG:gw-approved"\"
-  nft add rule "$NFT_TABLE" fwd ip saddr "$INTERNAL" \
+  nft add rule $NFT_TABLE fwd ip saddr "$INTERNAL" \
     counter drop comment \""$TAG:internal-drop"\"
-  nft add rule "$NFT_TABLE" fwd ip saddr "$EGRESS" \
+  nft add rule $NFT_TABLE fwd ip saddr "$EGRESS" \
     counter drop comment \""$TAG:egress-subnet-drop"\"
   echo "nftables rules applied (table $NFT_TABLE)"
 }
@@ -161,8 +161,8 @@ rollback_quiet() {
     fi
   done
   # 3) nft table
-  if nft list table "$NFT_TABLE" >/dev/null 2>&1; then
-    nft delete table "$NFT_TABLE"
+  if nft list table $NFT_TABLE >/dev/null 2>&1; then
+    nft delete table $NFT_TABLE
   fi
   return 0
 }
@@ -174,7 +174,7 @@ counters_iptables() {
 }
 
 counters_nftables() {
-  nft list table "$NFT_TABLE" 2>/dev/null \
+  nft list table $NFT_TABLE 2>/dev/null \
     | grep -oE 'counter packets [0-9]+ bytes [0-9]+ comment "[^"]+"' \
     | sed -E 's/counter packets ([0-9]+) bytes [0-9]+ comment "([^"]+)"/\2 packets=\1/' \
     | sort
@@ -189,7 +189,7 @@ residue() {
       && ip6tables-save -c 2>/dev/null | grep -qF -- "-m comment --comment \"$TAG"; then
     echo "residue: tagged ip6tables rules remain" >&2; left=1
   fi
-  if nft list table "$NFT_TABLE" >/dev/null 2>&1; then
+  if nft list table $NFT_TABLE >/dev/null 2>&1; then
     echo "residue: nft table $NFT_TABLE remains" >&2; left=1
   fi
   return "$left"
@@ -199,7 +199,7 @@ status() {
   echo "--- iptables (tagged, with counters) ---"
   counters_iptables || true
   echo "--- nftables $NFT_TABLE ---"
-  nft list table "$NFT_TABLE" 2>/dev/null || echo "(absent)"
+  nft list table $NFT_TABLE 2>/dev/null || echo "(absent)"
 }
 
 case "${1:-}" in

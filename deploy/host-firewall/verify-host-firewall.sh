@@ -380,14 +380,16 @@ run_matrix() {
 
   section "matrix [$backend]: rollback + zero residue (F4/F7)"
   bash "$RULES" rollback
+  # residue exits NONZERO when tagged rules remain (clean = exit 0)
   if bash "$RULES" residue >/dev/null 2>&1; then
-    verdict bad "zero residue [$backend]" "tagged rules remain after rollback"
-  else
     verdict ok "zero residue [$backend]" "no ppswitch-dep04 rules in iptables/ip6tables/nft"
+  else
+    verdict bad "zero residue [$backend]" "tagged rules remain after rollback"
   fi
-  # post-rollback reachability restored (proves the DROPs were OUR rules)
-  probe "$EXEC_CID" "$APPROVED_IP" "$APPROVED_PORT" open \
-    && verdict ok "post-rollback executor->approved reachable again" "DROPs were caused by the tested rules" \
+  # post-rollback reachability restored for the ROUTED vantage (the
+  # executor itself is layer-1 isolated with no route by design)
+  probe dep04-misexec "$APPROVED_IP" "$APPROVED_PORT" open \
+    && verdict ok "post-rollback misexec->approved reachable again" "DROPs were caused by the tested rules" \
     || verdict bad "post-rollback reachability" "still blocked after rollback"
 }
 
