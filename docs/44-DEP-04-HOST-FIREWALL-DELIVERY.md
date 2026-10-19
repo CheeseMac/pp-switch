@@ -28,9 +28,40 @@
 | V6 | CI：rollback 后 `residue` 为零 **且** executor→approved 恢复可达；目标主机：runbook 的持久化/重启存活/紧急恢复与 CI 模式严格分离 |
 | V7 | 双后端各有完整矩阵（含漂移重跑）；evidence 日志 artifact 归档；证据头记录 `iptables -V` 实际后端并注明 nftables 腿 ≠ Docker 原生 nft 后端 |
 
-## 2. CI 迭代记录（如实，随首跑更新）
+## 2. CI 迭代记录（如实，2026-10-19，共 15 轮至全绿）
 
-- 首跑及修复过程在本节按轮记录（FEAT-04 PG 层同款节奏）。
+本机为 Windows 开发环境，装置以 CI 首跑为验证场。全部失败原因与
+修复逐轮记录（`2c89bd7 → 6b5b362`）：
+
+| 轮 | 失败点 | 根因与修复 |
+| --- | --- | --- |
+| 1 | 脚本秒退 | 仓库根路径差一级（`cd ../..`） |
+| 2 | docker inspect 模板错 | Go 模板不认带连字符的 map 键 → index 函数 + printf 构造 |
+| 3 | 同上 | 双引号内层嵌套终止了外层串 → printf 单引号构造 |
+| 4 | 预证不可达 + 回滚 Bad rule | **设计修正**：internal:true 网络本就无路由——直连出站视点改为"误接 egress 网的同镜像替身容器 dep04-misexec"（恰为勘误 F2 场景的诚实形态）；executor 本体保留"无路由 layer-1"断言（不主张计数器）；spec 匹配 -D 不稳定 → 行号删除（后续再改状态文件法，见轮 7） |
+| 5 | 镜像名错 | compose 项目前缀 pp-switch-control（少了连字符） |
+| 6 | 残留+回滚后仍被阻 | iptables -L 不显示注释标签（需 -v）→ 行号法空转；nft 链 policy 子句解析失败 → 去掉显式 policy |
+| 7 | INPUT 规则删不掉 | **iptables-nft 的 -D 只认插入时的原始 argv**，save 归一化 spec（多 -m tcp 等）会 Bad rule → 插入时把删除 argv 记入状态文件，回滚原样重放 + 致命清扫兜底 |
+| 8 | 网关自拒 | 规则重写时插入顺序颠倒，egress-subnet-drop 排在身份放行前 → 恢复 intra/dns/gw/drop 顺序 |
+| 9 | usage 退出 | add-input-drop 被强制四参校验 → 独立解析器 |
+| 10 | 同上回归 | parse_args 的 require_all 参数吃掉首个 flag → 拆 parse_input_args |
+| 11 | 残留断言反了 / 回滚后视点错 / nft 表名单参 | residue 语义极性修正（clean=exit 0）；回滚后可达性改用 misexec 视点；$NFT_TABLE 两词去引号 |
+| 12 | nft 链定义解析失败 | 改 `nft -f` 文件输入 |
+| 13 | 仍然失败（同一 token） | **`fwd` 是新版 nft 的保留语句关键字**（fwd to）→ 链改名 dep04fwd |
+| 14 | nft 计数器读 0 / 漂移未变 / layer-2 检查引用旧链名 | 计数解析改按行取 packets；漂移加 disconnect+connect --ip 运行时重定址兜底；layer-2 检查改 list 表 |
+| 15 | 顶层 `local` | bash 只允许函数内 local → 去掉 |
+
+**终态**：64 PASS / 0 FAIL / 1 PENDING（IPv6 在 runner 无 v6 容器网络，
+按勘误②记为待补、不计为通过，目标主机实机补证）。
+
+设计层面的两处诚实修正（已并入装置语义，docs/43 §8 同步）：
+- **直连出站的可测视点**：正确拓扑下 executor 在 internal:true 网上
+  根本没有路由——"executor 直连被宿主规则 DROP"的宿主层证据只能来
+  自有路由的误接视点（dep04-misexec，同镜像、仅挂 egress 网）；
+  executor 本体的阻断是编排层隔离（layer-1，不主张 FORWARD 计数器）。
+- **internal-drop 计数器不主张增量**：正确拓扑下 internal 网段根本
+  不产生跨 FORWARD 流量（零流量才是健康态），该规则作为纵深防御
+  仅断言"已安装"。
 
 ## 3. 边界
 
