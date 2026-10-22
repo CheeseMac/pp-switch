@@ -6,48 +6,29 @@
 >
 > 通用 API 发现、连接切换、凭证保护与 Agent 安全能力平台。
 
-**项目状态：Pre-alpha —— 生产就绪综合审计进行中：Gate R1 完成网络边界三项 + 部署全链路验证（2026-10-14）**  
+**项目状态：开发态 Alpha（个人试用可上手）—— Gate R1 企业生产门禁进行中（2026-10-19）**  
 **本仓库启动文档版本：v0.1.0，2026-10-13**  
 **品牌名称：`pp switch`；仓库 / 包名称：`pp-switch`。**
 
-## 当前实现状态（诚实清单）
+## 当前状态
 
-**已实现并可在本仓库运行：**
+- **定位**：开发态 Alpha——个人开发者可在本机完整使用（发现 → 发布 →
+  切换 → Agent 调用 → 撤权）；企业生产部署未放行（Gate R1 未关闭）。
+- **已交付并验收**：API 发现（HAR/OpenAPI/浏览器采集）、发布向导、
+  连接与档案一键切换、OS Keyring 凭证（个人 + POSIX 共享隔离）、
+  只读 PostgreSQL 发现与固定参数化只读工具、Agent MCP 调用链、
+  三层出口隔离 + 宿主机防火墙实测装置。
+- **明确不支持**：Windows 共享 Keyring（启动即安全拒绝）；团队/生产
+  敏感数据接入（等 Gate R1）。
+- **Gate R1 剩余**：OIDC 身份（ID-07）、多实例与恢复演练（DATA-08）、
+  生产 SecretProvider、目标部署主机实机证据（含 IPv6 补证）。
+- 完整逐轮实现/加固记录与全部工程文档索引见
+  **[docs/INDEX.md](docs/INDEX.md)**。
 
-- Monorepo（`uv` Python workspace + `pnpm`）：`packages/core|db|discovery-sdk|policy-engine|secret-provider|python-sdk` 与 `apps/control-api|executor|mcp-adapter|demo-mock-crm|web-console`
-- 领域契约：Pydantic v2 模型、错误码、能力状态机（draft → reviewed → verified → published，发布版不可变）
-- 数据层：SQLAlchemy 2 ORM + Alembic 迁移（SQLite 开发 / PostgreSQL 生产基线），含复合外键租户约束与乐观锁并发切换
-- 发现管道：清洗校验的 HAR / OpenAPI 导入、路径模板归一化、指纹去重、JSON Schema 推断；未脱敏上传直接 422 拒绝
-- 能力注册与审核发布：review → verify → publish 工作流 + 输出白名单
-- 连接与档案：Connection（仅存 `secret_ref`，不存明文）、Profile（同 Service 对齐校验）、一键切换（409 版本冲突保护）
-- 受信执行器：HMAC 签名的执行计划 + 防重放 + 二次参数校验 + SSRF 网络策略（默认拒绝私网/元数据地址）+ 响应守卫（白名单投影、密钥形状脱敏、大小限额）
-- Secretless 公开 SDK `import ppswitch`：仅 `invoke / list_capabilities / profile_status`，无任何 `get_secret` 面
-- MCP 适配器（官方 `mcp` v2 SDK，stdio）：`tools/list` 按发布能力过滤，`tools/call` 走同一调用链
-- React 控制台：Services / Discovery / Capabilities / Connections / Profiles（一键切换）/ Invocations / Security 七页
-- 安全测试：docs/00 的 10 个验收场景、P0 安全用例（蜜罐不落库、未发布 404、保留参数 422、越权 403、密钥失联 fail-closed、在途快照等）与仓库密钥扫描脚本
-- CI：lint / typecheck / 全量测试（双 OS）/ 密钥扫描（`.github/workflows`）
-- 安全加固第一轮（技术评审后）：Connection 所有权三段校验、管理 API 仅限人类且审核≠创建人、审批绑定不可变 Proposal（请求人+版本+档案+参数摘要+15 分钟时效）并原子消费、幂等键绑定主体（冲突 409 而非泄漏）、执行器路径段校验+最终 URL 复检+强制主机白名单+元数据段不可豁免+请求时 DNS 复验+流式限长、响应守卫输出 Schema 递归白名单投影、执行快照脱敏（不存参数/secret_ref/目标地址）、demo 模式默认关闭且生产配置不完整拒绝启动（对应攻击组合测试 SEC-021…030）
-- 安全加固第二轮 v0.1.2（复核后）：全路由权限矩阵（Agent 默认仅可见已授予的已发布能力并可调用；member/reviewer/admin 角色）、User→Agent 委托表与按委托人隔离的 Agent Profile 绑定（共享 Agent 互不覆盖，SEC-033）、连接层 IP 钉扎（解析-校验-连接同一地址，DNS 检查后不可被二次解析改道）、响应守卫类型门先行 + 未知对象默认拒绝 + allow_fields 与 Schema 取交集、OpenAPI 导入期 Schema 清洗（example/default 等注解与密钥形状字符串不落库不进工具目录）、grant/connection/delegation scopes 交集授权、幂等回放前重新鉴权、上传分块限额读取、MCP 必填参数前置与工具名冲突双端拒绝、private/team/organization 可见性过滤、YAML 导入（对应回归测试 SEC-031…042）
-- 安全加固第三轮 v0.1.3（复审后）：幂等回放绑定委托用户（共享 Agent 不能跨用户复用缓存结果）、Capability required_scopes 显式授权链（空链不满足 scoped 能力）、Agent 目录公共视图（仅 published 版本、无内部 execution/allow_fields、过期 grant 剔除）、签名式 Delegation Context 票据取代参数选身份（ADR-005）、高风险审批与 Endpoint 审批提升至 reviewer 角色、响应守卫拒绝无 items 数组与未解析 $ref、endpoint 默认强制 HTTPS、手动创建 Capability 过导入级元数据清洗（对应回归测试 SEC-043…048 与共享 Agent 综合攻击场景）
-- 安全加固第四轮 v0.1.3.1（复审后）：幂等回放前重验完整 scope 链与 connection 存活（授权缩小/撤销后缓存不可再取）、Agent 历史查询强制委托票据并按委托用户过滤（撤销即刻生效）、输出 Schema 根节点 $ref 一律拒绝、委托票据生产强制独立签名密钥（ADR-005 修订/ADR-007）（对应回归测试 SEC-049…051 与撤销不变量四路径）
-- 数据生命周期 PR-DATA-12（第五轮批准后）：调用结果存储前数据分级（high/critical 默认 metadata-only）、保留期 TTL（过期读取为空）、Fernet 静态加密（生产强制密钥）、启动自动清理 + admin 清理 API；历史读取按记录重校验完整授权链（缩小未撤销同样不可读，SEC-052）；委托授权代际 generation 使撤销→重授权后的旧票据立即失效（SEC-053）；allOf/oneOf/anyOf 组合 schema 在受限解析器落地前一律 fail-closed（ADR-008：结果读取单一出口）
-- 生产就绪与受限解析（第六轮）：升级时清空存量明文结果（迁移 f3a62c8e1b47 + 运行时无期限明文兜底清扫）、结果清理按 Workspace 隔离（全局清扫仅限内部启动任务）且启动失败告警、Fernet 密钥轮换读写窗口（MultiFernet）+ 租户内重加密 API + 解密失败日志分类（DATA-15..17）；OpenAPI 本地 $ref 有界解析（外部引用不解引用、循环/深度上限、失败进人工审核）与响应守卫 allOf 纯对象分支受限合并（PR-NET-13，ADR-009）
-- 出口强制与部署（第七轮 PR-DEP-14）：allOf 重复属性一律拒绝、解析器四类资源预算（结构深度/节点数/数组长度/内联体积）与 $ref 兄弟键拒绝（NET-13-F1/F2）；IPv6 包装地址（IPv4-mapped/NAT64）按内嵌 IPv4 判定实现元数据段硬拒；三层出口隔离（应用层策略 + Compose executor 无出口网络 + 主机防火墙样例）、密钥轮换分页重加密与多实例运维规程、升级不可逆与备份加密说明（deploy/ + docs/28）
-- 受控出口网关与验收矩阵（第八轮 PR-QA-06）：egress-gateway（CONNECT-only 正向代理，独立 allowlist、canonical_ip 归一、元数据段硬拒、端到端 TLS 不解密、全量审计日志）使隔离的 executor 具备真实外部 API 调用能力（DEP-14-F1）；防火墙样例修正至 FORWARD/DOCKER-USER 路径，control 默认仅绑定回环、mock-crm 移入 demo profile；测试数据库参数化（PP_SWITCH_TEST_DB_URL），CI 新增 PostgreSQL 矩阵（QA-PG-01..05）与 Docker 部署验收（QA-DEP-01..05，deploy/verify-deployment.sh）
-- 生产就绪 Gate R1（综合审计后）：永久拒绝策略集覆盖非 link-local 云元数据端点（阿里云 100.100.100.200 / AWS fd00:ec2::254，allowlist 亦不可豁免）、出口端口边界（裸主机名仅 443，非标准端口需显式 host:port）、网关工作负载认证（Proxy-Authorization）与并发/速率/时长配额、control 移出出口网络并加容器加固（read_only/cap_drop/限额）、PostgreSQL 部署模板（deploy/docker-compose.postgres.yml）、部署验收升级为完整 Agent→Executor→Gateway→外部后端→响应守卫全链路 + 网关审计日志断言 + 可达性对照 + 全链合成凭证 canary（docs/30）
-- 功能冲刺 FEAT-04 首切片（只读 PostgreSQL 数据库发现，docs/39）：db-target 独立审批类型（reviewer 级、不可自审，与 HTTP endpoint 审批互不可代用）→ executor 以 keyring 只读账号（GRANT SELECT only，激活实连并拒 superuser 级）发现 approved schemas 元数据（仅列名+类型，未批 schema 双层不可见）→ FEAT-02 向导 db 变体人工确认参数与字段 → 既有 review/verify/publish → Agent 授权调用**固定参数化只读工具**：execution 为结构化 spec（无任何 SQL 文本面，语句由 executor psycopg 标识符合成，签名计划也无法夹带），超时/行数/大小三重限额，撤销 target 或连接即刻 403，DB 口令全程只在 keyring 与 executor
-
-**计划中、尚未实现（请勿当作已有能力）：**
-
-- 浏览器 Collector（Chrome MV3 授权采集）与 Postman 导入
-- OS Keyring / OpenBao SecretProvider（当前仅确定性 Mock provider）
-- OIDC / JWT audience 生产认证（当前为受控本地 dev token）
-- PostgreSQL RLS、配额与预算、审批工作台 UI、Contract drift 告警、Edge Connector / mTLS
-- SDK 的传输级生产认证（见 `packages/python-sdk` 文档中的安全声明）
-
-**demo 模式默认关闭**：`PP_SWITCH_DEMO_MODE` 仅由 `scripts/dev-up.py` 显式开启；非 demo 下 dev 登录目录/mock 凭证/默认内部 token 均不可用，生产配置不完整时服务拒绝启动。
-
-**安全边界声明：** 本仓库实现的是开发态安全闭环（synthetic 数据 + mock 凭证 + fail-closed 默认值），不构成生产安全认证。威胁模型与限制见 [docs/05](docs/05-SECURITY.md) 与 [docs/18](docs/18-SECRETLESS-DEVELOPMENT.md)。
+**demo 模式默认关闭**；**安全边界声明**：本仓库实现的是开发态安全
+闭环（synthetic 数据 + mock 凭证 + fail-closed 默认值），不构成生产
+安全认证。威胁模型见 [docs/05](docs/05-SECURITY.md) 与
+[docs/18](docs/18-SECRETLESS-DEVELOPMENT.md)。
 
 ## 快速开始（本地演示）
 
@@ -73,7 +54,7 @@ uv run python scripts/seed-demo.py
 #    -> Invocations 调用并观察数据集随档案切换
 ```
 
-测试：`uv run pytest`（304 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）+ `pnpm test`（浏览器扩展 31 项 vitest）；检查：`uv run ruff check . && uv run mypy packages apps`。
+测试：`uv run pytest`（370+ 用例：三服务真实 E2E、攻击组合矩阵 SEC-021…053、真实 PostgreSQL 层与宿主防火墙矩阵）+ `pnpm test`（浏览器扩展 31 项 vitest）；检查：`uv run ruff check . && uv run mypy packages apps`。
 
 ## 解决什么问题
 
@@ -109,56 +90,26 @@ uv run python scripts/seed-demo.py
 
 ## 文档导航
 
-| 想了解的内容 | 文件 |
+**上手与试用**
+
+| 内容 | 文件 |
+|---|---|
+| 试用日一页清单 + 实机验收剧本（Chrome / Claude·Cursor） | [40-ALPHA-QUICKSTART](docs/40-ALPHA-QUICKSTART.md) |
+| 推荐的第一个演示 | 见下方 §推荐的第一个演示 |
+
+**核心规范**
+
+| 内容 | 文件 |
 |---|---|
 | 先从哪里开始编码 | [00-START-HERE](docs/00-START-HERE.md) |
-| 产品理念、用户角色、需求与范围 | [01-PRODUCT-VISION-PRD](docs/01-PRODUCT-VISION-PRD.md) |
-| 核心架构、信任边界、部署形态 | [02-ARCHITECTURE](docs/02-ARCHITECTURE.md) |
-| 网页 API 自动发现、HAR / 数据库处理 | [03-API-DISCOVERY](docs/03-API-DISCOVERY.md) |
-| 能力模型、契约格式、状态机 | [04-CAPABILITY-CONTRACT](docs/04-CAPABILITY-CONTRACT.md) |
 | 密钥、权限、威胁模型与安全规则 | [05-SECURITY](docs/05-SECURITY.md) |
-| 数据库 ERD、SQL 结构与多租户规则 | [06-DATABASE](docs/06-DATABASE.md) |
-| REST / MCP 接口与错误码 | [07-API-SPEC](docs/07-API-SPEC.md) |
-| Monorepo 目录结构与模块职责 | [08-REPOSITORY-STRUCTURE](docs/08-REPOSITORY-STRUCTURE.md) |
-| 阶段任务、依赖、开发顺序与验收 | [09-IMPLEMENTATION-PLAN](docs/09-IMPLEMENTATION-PLAN.md) |
-| 本地、内网和服务器部署 | [10-DEPLOYMENT](docs/10-DEPLOYMENT.md) |
-| 测试矩阵与可验证安全目标 | [11-TEST-PLAN](docs/11-TEST-PLAN.md) |
-| UI 交互、一键切换与接入向导 | [12-UX-FLOWS](docs/12-UX-FLOWS.md) |
-| 技术决策、待确认事项、权衡 | [13-DECISIONS](docs/13-DECISIONS.md) |
-| 开源协作与企业采纳 | [14-OPEN-SOURCE](docs/14-OPEN-SOURCE.md) |
-| 一手资料与相关开源项目 | [15-REFERENCES](docs/15-REFERENCES.md) |
-| 给开发 Agent 的执行规则 | [16-AGENT-DEVELOPMENT-RULES](docs/16-AGENT-DEVELOPMENT-RULES.md) |
-| 故障与操作手册 | [17-OPERATIONS-RUNBOOK](docs/17-OPERATIONS-RUNBOOK.md) |
-| **AI 编码助手与 `.env` 密钥隔离（核心）** | **[18-SECRETLESS-DEVELOPMENT](docs/18-SECRETLESS-DEVELOPMENT.md)** |
-| 首批可直接交给编码 Agent 的任务 | [19-FIRST-CODING-TASKS](docs/19-FIRST-CODING-TASKS.md) |
-| **v0.1.0 首竖切实现审核报告（送审）** | **[20-IMPLEMENTATION-REVIEW](docs/20-IMPLEMENTATION-REVIEW.md)** |
-| **技术评审回复与安全加固记录（v0.1.1）** | **[21-REVIEW-RESPONSE](docs/21-REVIEW-RESPONSE.md)** |
-| **第二轮复核回复与 v0.1.2 加固记录** | **[22-REVIEW-RESPONSE-2](docs/22-REVIEW-RESPONSE-2.md)** |
-| **第三轮复审回复与 v0.1.3 加固记录** | **[23-REVIEW-RESPONSE-3](docs/23-REVIEW-RESPONSE-3.md)** |
-| **第四轮复审回复与撤销不变量补丁** | **[24-REVIEW-RESPONSE-4](docs/24-REVIEW-RESPONSE-4.md)** |
-| **第五轮复审回复与 PR-DATA-12 记录** | **[25-REVIEW-RESPONSE-5](docs/25-REVIEW-RESPONSE-5.md)** |
-| **第六轮复审回复与 PR-NET-13 记录** | **[26-REVIEW-RESPONSE-6](docs/26-REVIEW-RESPONSE-6.md)** |
-| **第七轮复审回复与 PR-DEP-14 记录** | **[27-REVIEW-RESPONSE-7](docs/27-REVIEW-RESPONSE-7.md)** |
-| **部署与出口强制控制** | **[28-DEPLOYMENT-AND-EGRESS](docs/28-DEPLOYMENT-AND-EGRESS.md)** |
-| **第八轮复审回复与 PR-QA-06 记录** | **[29-REVIEW-RESPONSE-8](docs/29-REVIEW-RESPONSE-8.md)** |
-| **生产就绪 Gate R1 进度** | **[30-GATE-R1-PROGRESS](docs/30-GATE-R1-PROGRESS.md)** |
-| **交接文档（状态/任务/坑/红线）** | **[31-HANDOVER](docs/31-HANDOVER.md)** |
-| **FEAT-01 浏览器 API Collector 交付记录** | **[32-FEAT-01-COLLECTOR](docs/32-FEAT-01-COLLECTOR.md)** |
-| **FEAT-02 发布向导交付记录** | **[33-FEAT-02-WIZARD](docs/33-FEAT-02-WIZARD.md)** |
-| **FEAT-05A Agent 一键接入交付记录** | **[34-FEAT-05A-AGENT-ACCESS](docs/34-FEAT-05A-AGENT-ACCESS.md)** |
-| **FEAT-03 本地 Keyring 交付记录** | **[35-FEAT-03-KEYRING](docs/35-FEAT-03-KEYRING.md)** |
-| **评审交接包入库（含 FEAT-03 验收剧本）** | **[36-REVIEW-HANDOFF](docs/36-REVIEW-HANDOFF-2026-10-15.md)** |
-| **评审回应：连接所有权 + Agent 组合验收** | **[37-REVIEW-RESPONSE](docs/37-REVIEW-RESPONSE-2026-10-16.md)** |
-| **交接文档（FEAT-04 会话入口）** | **[38-HANDOVER-FEAT04](docs/38-HANDOVER-FEAT04.md)** |
-| **FEAT-04 只读 PostgreSQL 发现交付记录** | **[39-FEAT04-DB-DISCOVERY](docs/39-FEAT04-DB-DISCOVERY.md)** |
-| **Alpha 快速上手与实机验收剧本** | **[40-ALPHA-QUICKSTART](docs/40-ALPHA-QUICKSTART.md)** |
-| **SECRET-06 Keyring 隔离设计（已批复实施，含勘误修订）** | **[41-PROPOSAL-SECRET-06-KEYRING-ISOLATION](docs/41-PROPOSAL-SECRET-06-KEYRING-ISOLATION.md)** |
-| **SECRET-06 交付记录（claim+配对证明+全长 MAC 钉扎+代际撤销）** | **[42-SECRET-06-DELIVERY](docs/42-SECRET-06-DELIVERY.md)** |
-| **DEP-04 宿主机防火墙设计（已批复实施，含勘误）** | **[43-PROPOSAL-DEP-04-HOST-FIREWALL](docs/43-PROPOSAL-DEP-04-HOST-FIREWALL.md)** |
-| **DEP-04 交付记录（FORWARD 路径实测装置 + CI host-firewall job）** | **[44-DEP-04-HOST-FIREWALL-DELIVERY](docs/44-DEP-04-HOST-FIREWALL-DELIVERY.md)** |
-| **交接文档（M2 试用/归档会话入口）** | **[45-HANDOVER-M2-TRIAL](docs/45-HANDOVER-M2-TRIAL.md)** |
+| AI 编码助手与 `.env` 密钥隔离（核心） | [18-SECRETLESS-DEVELOPMENT](docs/18-SECRETLESS-DEVELOPMENT.md) |
+| 架构、能力契约、API 规格、数据库、部署 | [02](docs/02-ARCHITECTURE.md) / [04](docs/04-CAPABILITY-CONTRACT.md) / [07](docs/07-API-SPEC.md) / [06](docs/06-DATABASE.md) / [10](docs/10-DEPLOYMENT.md) |
+| 交接文档（最新状态/踩坑/待办） | [45-HANDOVER-M2-TRIAL](docs/45-HANDOVER-M2-TRIAL.md) |
 
-**优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
+**工程过程记录**（评审回应、功能交付记录、设计提案、Gate R1 进度、
+完整蓝图 00–20 等 40+ 份）：全部收录于
+**[docs/INDEX.md](docs/INDEX.md)**——实现状态全记录也在该页。
 
 ## 技术基线（提案）
 
