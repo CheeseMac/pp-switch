@@ -280,9 +280,17 @@ run_matrix() {
   section "matrix [$backend]: P1 intra-subnet service reachability"
   local CTRL_IP
   CTRL_IP=$(docker inspect "$(container_id control)" --format "$(printf '{{(index .NetworkSettings.Networks "%s").IPAddress}}' "$INTERNAL_NET")")
-  probe "$EXEC_CID" "$CTRL_IP" 8911 open \
+  # readiness retries: after a recreate, control may still be booting —
+  # "not listening yet" must not read as a firewall result (P1 asserts
+  # bridge-local reachability; DROPs are counter-proven separately)
+  local p1_open=0
+  for _ in 1 2 3; do
+    if probe "$EXEC_CID" "$CTRL_IP" 8911 open; then p1_open=1; break; fi
+    sleep 2
+  done
+  [ "$p1_open" = 1 ] \
     && verdict ok "P1 executor->control:8911 (intra internal)" "bridge-local, unaffected by FORWARD rules" \
-    || verdict bad "P1 intra" "control unreachable from executor"
+    || verdict bad "P1 intra" "control unreachable from executor (retried 3x)"
 
   section "matrix [$backend]: P2 gateway egress to APPROVED target (F1+F2)"
   if probe "$GATE_CID" "$APPROVED_IP" "$APPROVED_PORT" open; then
@@ -447,6 +455,15 @@ GATE_ACTUAL=$(docker inspect "$(container_id egress-gateway)" --format "$(printf
   && verdict ok "gateway static identity survives recreate" "$GATE_ACTUAL" \
   || verdict bad "gateway static identity survives recreate" "got $GATE_ACTUAL"
 EXEC_CID=$(container_id executor); GATE_CID=$(container_id egress-gateway)
+
+# control needs a few seconds to boot after recreate; without this wait
+# the rerun's P1 probe reads "not listening yet" as "blocked" (a
+# readiness artifact, not a firewall result)
+for _ in $(seq 1 30); do
+  docker exec "$(container_id control)" python -c \
+    "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8911/healthz')" 2>/dev/null && break
+  sleep 2
+done
 
 section "phase 5b: matrix rerun after drift (iptables backend)"
 run_matrix ipt
